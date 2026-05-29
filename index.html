@@ -5,22 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LANDXML Station Tracker</title>
 
-  <!-- PROJ -->
   <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.2/dist/proj4.js"></script>
 
-  <!-- LEAFLET -->
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
     body { font-family: sans-serif; margin: 0; display: flex; height: 100vh; }
-    #sidebar { width: 320px; padding: 12px; overflow: auto; }
+    #sidebar { width: 340px; padding: 12px; overflow: auto; }
     #map { flex: 1; }
     .box { margin-top: 12px; }
     #station { font-size: 28px; font-weight: bold; }
+    input { width: 100%; padding: 6px; margin: 4px 0; }
+    button { width: 100%; padding: 8px; margin-top: 6px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -29,6 +26,13 @@
   <h2>LANDXML Station Tracker</h2>
 
   <input type="file" id="fileInput" accept=".xml,.landxml" />
+
+  <div class="box">
+    <h3>Mock Lat/Lon Test</h3>
+    <input id="latInput" placeholder="Latitude (e.g. 43.7)" />
+    <input id="lonInput" placeholder="Longitude (e.g. -79.4)" />
+    <button id="testBtn">Get Station</button>
+  </div>
 
   <div class="box">
     <h3>GPS</h3>
@@ -51,36 +55,24 @@
 
 <script>
 
-// -----------------------------
-// PROJECTION
-// -----------------------------
 proj4.defs(
   "MTM",
-  "+proj=tmerc +lat_0=0 +lon_0=-90 +k=0.9999 +x_0=304800 +y_0=0 +datum=NAD83 +units=m +no_defs"
+  "+proj=tmerc +lat_0=0 +lon_0=-79.5 +k=0.9999 +x_0=304800 +y_0=0 +datum=NAD83 +units=m +no_defs"
 );
 
 let alignment = null;
 let map;
 let alignmentLayer;
 let gpsMarker;
-let userLine;
+let testMarker;
 
-// -----------------------------
-// INIT MAP
-// -----------------------------
 function initMap() {
-  map = L.map('map').setView([48.3, -89.3], 14);
-
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 20
-  }).addTo(map);
+  map = L.map('map').setView([43.7, -79.4], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20 }).addTo(map);
 }
-
 initMap();
 
-// -----------------------------
-// GPS WATCH
-// -----------------------------
+// GPS live (optional)
 navigator.geolocation.watchPosition((pos) => {
   const lat = pos.coords.latitude;
   const lon = pos.coords.longitude;
@@ -88,181 +80,139 @@ navigator.geolocation.watchPosition((pos) => {
   document.getElementById("gps").innerText = `${lat.toFixed(6)}, ${lon.toFixed(6)}`;
 
   const [x, y] = proj4("WGS84", "MTM", [lon, lat]);
-
   document.getElementById("proj").innerText = `${x.toFixed(2)}, ${y.toFixed(2)}`;
 
-  const latlng = [lat, lon];
-
-  if (!gpsMarker) {
-    gpsMarker = L.marker(latlng).addTo(map);
-  } else {
-    gpsMarker.setLatLng(latlng);
-  }
-
-  if (alignment) {
-    const info = computeStation(alignment, x, y);
-    if (info) {
-      document.getElementById("station").innerText = formatStation(info.station);
-      document.getElementById("offset").innerText = "Offset: " + info.offset.toFixed(2) + " m";
-
-      // draw user projection line
-      const userLatLng = gpsToLatLng(info.point.x, info.point.y);
-
-      if (!userLine) {
-        userLine = L.polyline([latlng, userLatLng], { color: 'red' }).addTo(map);
-      } else {
-        userLine.setLatLngs([latlng, userLatLng]);
-      }
-    }
-  }
 }, console.error, { enableHighAccuracy: true });
 
-// -----------------------------
-// LANDXML LOADER
-// -----------------------------
-
-// NOTE: simplified but now supports Line + Arc
-
+// FILE LOAD
 document.getElementById("fileInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   const text = await file.text();
-
   alignment = parseLandXML(text);
-
   drawAlignment();
-
   alert("Alignment loaded");
 });
 
-// -----------------------------
-// LANDXML PARSER (BASIC CIVILD3D SUPPORT)
-// -----------------------------
+// TEST BUTTON
+
+document.getElementById("testBtn").addEventListener("click", () => {
+  if (!alignment) return alert("Load alignment first");
+
+  const lat = parseFloat(document.getElementById("latInput").value);
+  const lon = parseFloat(document.getElementById("lonInput").value);
+
+  if (isNaN(lat) || isNaN(lon)) return alert("Invalid lat/lon");
+
+  const [x, y] = proj4("WGS84", "MTM", [lon, lat]);
+
+  const info = computeStation(alignment, x, y);
+  if (!info) return;
+
+  document.getElementById("station").innerText = formatStation(info.station);
+  document.getElementById("offset").innerText = "Offset: " + info.offset.toFixed(2) + " m";
+
+  const latlng = [lat, lon];
+
+  if (!testMarker) {
+    testMarker = L.marker(latlng).addTo(map);
+  } else {
+    testMarker.setLatLng(latlng);
+  }
+
+  map.setView(latlng, 17);
+});
+
+// LANDXML (same simplified parser)
 function parseLandXML(xmlText) {
   const xml = new DOMParser().parseFromString(xmlText, "text/xml");
-
-  const coordGeom = xml.querySelectorAll("CoordGeom")[0];
+  const coordGeom = xml.querySelector("CoordGeom");
   if (!coordGeom) return [];
 
-  const segments = [];
   let station = 0;
+  const pts = [];
 
   coordGeom.childNodes.forEach(node => {
     if (node.nodeName === "Line") {
-      const start = node.querySelector("Start");
-      const end = node.querySelector("End");
+      const s = node.querySelector("Start");
+      const e = node.querySelector("End");
+      if (!s || !e) return;
 
-      if (!start || !end) return;
-
-      const x1 = parseFloat(start.getAttribute("x"));
-      const y1 = parseFloat(start.getAttribute("y"));
-      const x2 = parseFloat(end.getAttribute("x"));
-      const y2 = parseFloat(end.getAttribute("y"));
+      const x1 = parseFloat(s.getAttribute("x"));
+      const y1 = parseFloat(s.getAttribute("y"));
+      const x2 = parseFloat(e.getAttribute("x"));
+      const y2 = parseFloat(e.getAttribute("y"));
 
       station += Math.hypot(x2-x1, y2-y1);
-
-      segments.push({ x: x2, y: y2, station });
+      pts.push({ x: x2, y: y2, station });
     }
 
-    // ARC (approximated)
     if (node.nodeName === "Arc") {
-      const start = node.querySelector("Start");
-      const end = node.querySelector("End");
+      const s = node.querySelector("Start");
+      const e = node.querySelector("End");
+      if (!s || !e) return;
 
-      if (!start || !end) return;
+      const x1 = parseFloat(s.getAttribute("x"));
+      const y1 = parseFloat(s.getAttribute("y"));
+      const x2 = parseFloat(e.getAttribute("x"));
+      const y2 = parseFloat(e.getAttribute("y"));
 
-      const x1 = parseFloat(start.getAttribute("x"));
-      const y1 = parseFloat(start.getAttribute("y"));
-      const x2 = parseFloat(end.getAttribute("x"));
-      const y2 = parseFloat(end.getAttribute("y"));
-
-      const radius = parseFloat(node.getAttribute("radius")) || null;
-
-      const steps = 10;
-
+      const steps = 8;
       for (let i = 1; i <= steps; i++) {
         const t = i / steps;
-        const x = x1 + (x2 - x1) * t;
-        const y = y1 + (y2 - y1) * t;
-
-        station += Math.hypot(x - (segments.at(-1)?.x || x1), y - (segments.at(-1)?.y || y1));
-
-        segments.push({ x, y, station });
+        const x = x1 + (x2-x1)*t;
+        const y = y1 + (y2-y1)*t;
+        station += Math.hypot(x-(pts.at(-1)?.x||x1), y-(pts.at(-1)?.y||y1));
+        pts.push({ x, y, station });
       }
     }
   });
 
-  return segments;
+  return pts;
 }
 
-// -----------------------------
-// DRAW ALIGNMENT ON MAP
-// -----------------------------
 function drawAlignment() {
   if (alignmentLayer) map.removeLayer(alignmentLayer);
-
-  const latlngs = alignment.map(p => mtmToLatLng(p.x, p.y));
-
+  const latlngs = alignment.map(p => proj4("MTM","WGS84",[p.x,p.y]).reverse());
   alignmentLayer = L.polyline(latlngs, { color: 'blue' }).addTo(map);
-
   map.fitBounds(alignmentLayer.getBounds());
 }
 
-// -----------------------------
-// STATION CALCULATION
-// -----------------------------
 function computeStation(alignment, x, y) {
   let best = null;
-  let minDist = Infinity;
+  let min = Infinity;
 
-  for (let i = 0; i < alignment.length - 1; i++) {
+  for (let i=0;i<alignment.length-1;i++) {
     const a = alignment[i];
-    const b = alignment[i + 1];
+    const b = alignment[i+1];
 
-    const res = project(a, b, {x, y});
-
-    if (res.dist < minDist) {
-      minDist = res.dist;
-      best = res;
+    const r = project(a,b,{x,y});
+    if (r.dist < min) {
+      min = r.dist;
+      best = r;
     }
   }
-
   return best;
 }
 
-function project(a, b, p) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
+function project(a,b,p) {
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const t=((p.x-a.x)*dx+(p.y-a.y)*dy)/(dx*dx+dy*dy);
+  const tt=Math.max(0,Math.min(1,t));
 
-  const t = ((p.x-a.x)*dx + (p.y-a.y)*dy) / (dx*dx + dy*dy);
-  const tt = Math.max(0, Math.min(1, t));
+  const x=a.x+tt*dx;
+  const y=a.y+tt*dy;
 
-  const x = a.x + tt*dx;
-  const y = a.y + tt*dy;
-
-  const dist = Math.hypot(p.x-x, p.y-y);
-  const station = a.station + tt*(b.station - a.station);
-
-  return { station, dist, point: {x,y} };
+  return {
+    station:a.station+tt*(b.station-a.station),
+    dist:Math.hypot(p.x-x,p.y-y),
+    point:{x,y}
+  };
 }
 
-// -----------------------------
-// COORD CONVERSIONS
-// -----------------------------
-function mtmToLatLng(x, y) {
-  return proj4("MTM", "WGS84", [x, y]).reverse();
-}
-
-function gpsToLatLng(x, y) {
-  return proj4("MTM", "WGS84", [x, y]).reverse();
-}
-
-// -----------------------------
-// FORMAT STATION
-// -----------------------------
-function formatStation(sta) {
-  const whole = Math.floor(sta);
-  const dec = Math.round((sta - whole) * 100);
-  return `${whole}+${dec.toString().padStart(2,'0')}`;
+function formatStation(s){
+  const w=Math.floor(s);
+  const d=Math.round((s-w)*100);
+  return `${w}+${d.toString().padStart(2,'0')}`;
 }
 
 </script>
