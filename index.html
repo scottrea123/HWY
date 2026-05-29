@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LANDXML Viewer (Leaflet)</title>
+  <title>LANDXML Viewer (Leaflet) 1</title>
 
   <script src="https://cdn.jsdelivr.net/npm/proj4@2.9.2/dist/proj4.js"></script>
 
@@ -115,7 +115,7 @@ function parseLandXML(xmlText) {
 // ------------------------------
 function mtmToLatLng(x, y) {
   // NOTE: assumes MTM-like coordinates already near local zone
-  return proj4("EPSG:2951", "WGS84", [x, y]).reverse();
+  return proj4("EPSG:32195", "WGS84", [x, y]).reverse();
 }
 
 </script>
